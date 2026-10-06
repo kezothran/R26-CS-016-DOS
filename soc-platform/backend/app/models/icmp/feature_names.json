@@ -1,0 +1,15 @@
+[
+  [
+    "frame.len",
+    "icmp.type",
+    "icmp.code",
+    "icmp.seq",
+    "icmp.ident",
+    "data.len",
+    "ip.ttl_clean",
+    "src_packet_count",
+    "src_mean_delta",
+    "frame.time_delta",
+    "frame.time_relative"
+]
+]
