@@ -3,11 +3,10 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { apiFetch, downloadFile } from "@/lib/api";
 import { canWrite, getRole } from "@/lib/auth";
-import { playbookFor } from "@/lib/playbooks";
 import { useSocStream } from "@/lib/SocStreamContext";
 import { severityColor, themeFor, tierTheme } from "@/lib/theme";
 import type {
-  AdminUser, BlockAction, IncidentDetail, IncidentSummary, Resolution, WorkflowStatus,
+  AdminUser, BlockAction, IncidentDetail, IncidentPlaybook, IncidentSummary, Resolution, WorkflowStatus,
 } from "@/lib/types";
 
 const RANGES = ["1h", "24h", "7d", "30d"];
@@ -450,10 +449,42 @@ function IncidentDetailPanel({
   const [noteBody, setNoteBody] = useState("");
   const [blockActions, setBlockActions] = useState<BlockAction[]>([]);
   const [busy, setBusy] = useState(false);
+  const [playbook, setPlaybook] = useState<IncidentPlaybook | null>(null);
+  const [actionMsg, setActionMsg] = useState<string | null>(null);
+  const [ticketError, setTicketError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setDetail(await apiFetch<IncidentDetail>(`/api/incidents/${incidentId}`));
+    setPlaybook(await apiFetch<IncidentPlaybook>(`/api/incidents/${incidentId}/playbook`).catch(() => null));
   }, [incidentId]);
+
+  async function toggleStep(stepId: string, done: boolean) {
+    setBusy(true);
+    try {
+      await apiFetch(`/api/incidents/${incidentId}/playbook/steps/${stepId}`, { method: "POST", body: JSON.stringify({ done }) });
+      setPlaybook(await apiFetch<IncidentPlaybook>(`/api/incidents/${incidentId}/playbook`));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runStepAction(action: "propose_block" | "open_ticket") {
+    if (action === "open_ticket") { setTab("ticket"); return; }
+    setBusy(true);
+    try {
+      const r = await apiFetch<{ proposed: string[]; already_proposed: string[] }>(
+        `/api/incidents/${incidentId}/propose-block`, { method: "POST" },
+      );
+      setActionMsg(
+        r.proposed.length
+          ? `Proposed dry-run block for ${r.proposed.join(", ")} - review it in the Block Action tab.`
+          : "Every source IP already has a proposed or executed block.",
+      );
+      setBlockActions(await apiFetch<BlockAction[]>("/api/block-actions?status=proposed"));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   useEffect(() => { load(); }, [load]);
   useEffect(() => {
@@ -487,11 +518,27 @@ function IncidentDetailPanel({
     }
   }
 
-  async function createTicket(provider: "jira" | "servicenow") {
+  async function createTicket() {
     setBusy(true);
+    setTicketError(null);
     try {
-      await apiFetch(`/api/incidents/${incidentId}/ticket`, { method: "POST", body: JSON.stringify({ provider }) });
+      await apiFetch(`/api/incidents/${incidentId}/ticket`, { method: "POST", body: JSON.stringify({ provider: "jira" }) });
       await load();
+    } catch (e) {
+      setTicketError(e instanceof Error ? e.message : "Ticket creation failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncTickets() {
+    setBusy(true);
+    setTicketError(null);
+    try {
+      await apiFetch(`/api/incidents/${incidentId}/tickets/sync`, { method: "POST" });
+      await load();
+    } catch (e) {
+      setTicketError(e instanceof Error ? e.message : "Status refresh failed");
     } finally {
       setBusy(false);
     }
@@ -568,7 +615,7 @@ function IncidentDetailPanel({
               cursor: "pointer", textTransform: "capitalize",
             }}
           >
-            {tb === "block" ? "Block Action" : tb}
+            {tb === "block" ? "Block Action" : tb === "playbook" && playbook && playbook.total > 0 ? `playbook ${playbook.done}/${playbook.total}` : tb}
           </button>
         ))}
       </div>
@@ -626,23 +673,40 @@ function IncidentDetailPanel({
       {tab === "ticket" && (
         <div>
           <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 12 }}>
-            Simulated integration - no real Jira/ServiceNow account is connected; this records a placeholder reference only.
+            Creates a Jira issue pre-filled with this incident&apos;s severity, source IPs and attack types. One open ticket per incident.
           </div>
           {writable && (
             <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <button onClick={() => createTicket("jira")} disabled={busy} style={btnStyle}>Create Jira Ticket</button>
-              <button onClick={() => createTicket("servicenow")} disabled={busy} style={btnStyle}>Create ServiceNow Ticket</button>
+              <button onClick={createTicket} disabled={busy} style={btnStyle}>Create Jira Ticket</button>
+              {detail.tickets.some((tk) => !tk.simulated) && (
+                <button onClick={syncTickets} disabled={busy} style={{ ...btnStyle, background: "transparent" }}>Refresh status</button>
+              )}
             </div>
           )}
+          {ticketError && <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 10 }}>{ticketError}</div>}
           {detail.tickets.length === 0 ? (
             <div style={{ color: "var(--dim)", fontSize: 12 }}>No tickets created</div>
           ) : (
-            detail.tickets.map((tk) => (
-              <div key={tk.ticket_id} style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: 12 }}>
-                <span>{tk.provider} · <span style={{ fontFamily: "var(--mono)" }}>{tk.external_ref}</span> <em style={{ color: "var(--dim)", fontStyle: "normal", fontSize: 10 }}>(simulated)</em></span>
-                <span style={{ color: "var(--muted)" }}>{new Date(tk.created_at).toLocaleString()}</span>
-              </div>
-            ))
+            detail.tickets.map((tk) => {
+              const done = tk.status_category === "done";
+              const color = done ? "var(--green)" : tk.status_category === "indeterminate" ? "var(--amber)" : "var(--blue)";
+              return (
+                <div key={tk.ticket_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", fontSize: 12, borderBottom: "1px solid var(--raised)" }}>
+                  <span>
+                    {tk.url ? (
+                      <a href={tk.url} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--mono)", color: "var(--blue)" }}>{tk.external_ref}</a>
+                    ) : (
+                      <span style={{ fontFamily: "var(--mono)" }}>{tk.external_ref}</span>
+                    )}
+                    {tk.simulated && <em style={{ color: "var(--dim)", fontStyle: "normal", fontSize: 10 }}> (simulated)</em>}
+                    {tk.status && !tk.simulated && (
+                      <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", borderRadius: 10, border: `1px solid ${color}`, color }}>{tk.status}</span>
+                    )}
+                  </span>
+                  <span style={{ color: "var(--muted)" }}>{new Date(tk.created_at).toLocaleString()}</span>
+                </div>
+              );
+            })
           )}
         </div>
       )}
@@ -674,9 +738,47 @@ function IncidentDetailPanel({
       )}
 
       {tab === "playbook" && (
-        <ol style={{ paddingLeft: 18, fontSize: 12, lineHeight: 1.8, color: "var(--muted)" }}>
-          {playbookFor(detail.attack_types).map((step, i) => <li key={i}>{step}</li>)}
-        </ol>
+        <div>
+          {!playbook || playbook.total === 0 ? (
+            <div style={{ color: "var(--dim)", fontSize: 12 }}>No enabled playbook matches this incident. An admin can add one on the Playbooks page.</div>
+          ) : (
+            <>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+                <div style={{ flex: 1, height: 6, background: "var(--raised)", borderRadius: 3, overflow: "hidden" }}>
+                  <div style={{ width: `${(playbook.done / playbook.total) * 100}%`, height: "100%", background: "var(--green)" }} />
+                </div>
+                <span style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--mono)" }}>{playbook.done}/{playbook.total} done</span>
+              </div>
+              {actionMsg && <div style={{ fontSize: 11, color: "var(--blue)", marginBottom: 10 }}>{actionMsg}</div>}
+              {playbook.steps.map((s, i) => (
+                <div key={s.id}>
+                  {(i === 0 || playbook.steps[i - 1].playbook_name !== s.playbook_name) && (
+                    <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--dim)", margin: "10px 0 4px" }}>{s.playbook_name}</div>
+                  )}
+                  <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "7px 0", borderBottom: "1px solid var(--raised)" }}>
+                    <input
+                      type="checkbox" checked={s.done} disabled={busy || !writable}
+                      onChange={(e) => toggleStep(s.id, e.target.checked)} style={{ marginTop: 3 }}
+                    />
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 12, lineHeight: 1.6, color: s.done ? "var(--dim)" : "var(--text)", textDecoration: s.done ? "line-through" : "none" }}>{s.title}</div>
+                      {s.done && s.done_at && (
+                        <div style={{ fontSize: 10, color: "var(--dim)" }}>
+                          Done by {users.find((u) => u.id === s.done_by)?.email ?? "an analyst"} · {new Date(s.done_at).toLocaleString()}
+                        </div>
+                      )}
+                    </div>
+                    {s.action && writable && (
+                      <button onClick={() => runStepAction(s.action as "propose_block" | "open_ticket")} disabled={busy} style={btnStyle}>
+                        {s.action === "propose_block" ? "Propose block" : "Open ticket tab"}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
+        </div>
       )}
     </Box>
   );
