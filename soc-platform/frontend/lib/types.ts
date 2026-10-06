@@ -121,6 +121,10 @@ export interface TicketLink {
   external_ref: string;
   url: string | null;
   created_at: string;
+  simulated: boolean;
+  status: string | null;
+  status_category: "new" | "indeterminate" | "done" | null;
+  status_synced_at: string | null;
 }
 
 export interface IncidentDetail extends IncidentSummary {
@@ -228,4 +232,39 @@ export interface HealthStatus {
   trained: Record<string, boolean>;
   uptime_seconds: number;
   model_status: Record<string, ModelStatus>;
+}
+
+export type PlaybookAction = "propose_block" | "open_ticket" | null;
+
+export interface PlaybookStepDef {
+  title: string;
+  action: PlaybookAction;
+}
+
+export interface Playbook {
+  id: string;
+  name: string;
+  attack_type: string | null;
+  tier: string | null;
+  steps: PlaybookStepDef[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface IncidentPlaybookStep {
+  id: string;
+  playbook_name: string;
+  step_index: number;
+  title: string;
+  action: PlaybookAction;
+  done: boolean;
+  done_by: string | null;
+  done_at: string | null;
+}
+
+export interface IncidentPlaybook {
+  steps: IncidentPlaybookStep[];
+  done: number;
+  total: number;
 }
