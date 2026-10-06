@@ -20,6 +20,13 @@ class Settings(BaseSettings):
     alert_email_to: str | None = None  # comma-separated
     slack_webhook_url: str | None = None
 
+    # Jira Cloud ticket integration (app/integrations/jira.py) - all four must be set, otherwise
+    # tickets fall back to the simulated placeholder behaviour.
+    jira_base_url: str | None = None
+    jira_email: str | None = None
+    jira_api_token: str | None = None
+    jira_project_key: str | None = None
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

@@ -1,3 +1,4 @@
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,6 +10,7 @@ from app import audit
 from app.api.query_utils import parse_range
 from app.auth.security import get_current_user, require_role
 from app.db.base import get_session
+from app.integrations import jira
 from app.db.models import Alert, FalsePositiveFeedback, Incident, IncidentNote, SecurityScore, TicketLink, User
 from app.scoring import aggregate
 
@@ -148,13 +150,7 @@ async def get_incident(
             {"note_id": str(n.id), "author_id": str(n.author_id), "body": n.body, "created_at": n.created_at.isoformat()}
             for n in notes
         ],
-        "tickets": [
-            {
-                "ticket_id": str(t.id), "provider": t.provider, "external_ref": t.external_ref,
-                "url": t.url, "created_at": t.created_at.isoformat(),
-            }
-            for t in tickets
-        ],
+        "tickets": [_ticket_out(t) for t in tickets],
     }
 
 
@@ -243,8 +239,34 @@ async def add_note(
     return {"note_id": str(note.id), "author_id": str(note.author_id), "body": note.body, "created_at": note.created_at.isoformat()}
 
 
+def _ticket_out(t: TicketLink) -> dict:
+    return {
+        "ticket_id": str(t.id), "provider": t.provider, "external_ref": t.external_ref, "url": t.url,
+        "created_at": t.created_at.isoformat(), "simulated": t.simulated, "status": t.status,
+        "status_category": t.status_category,
+        "status_synced_at": t.status_synced_at.isoformat() if t.status_synced_at else None,
+    }
+
+
+def _ticket_content(incident: Incident, alerts: list[Alert]) -> tuple[str, list[str], list[str]]:
+    attacks = ", ".join(a.upper() for a in incident.attack_types)
+    ips = ", ".join(incident.src_ips)
+    summary = f"[{incident.tier}] {attacks} flood from {ips}"
+    lines = [
+        f"Sentrix incident {incident.id}",
+        f"Severity: {incident.tier} (combined impact {incident.combined_impact:.1f}, correlation: {incident.correlation_confidence})",
+        f"Attack types: {attacks}",
+        f"Source IPs: {ips}",
+        f"Interface: {incident.iface}",
+        f"First seen: {incident.first_seen.isoformat()}  Last seen: {incident.last_seen.isoformat()}",
+        f"Alerts recorded: {len(alerts)}; peak hybrid confidence: {max((a.hybrid_conf for a in alerts), default=0):.2f}",
+    ]
+    labels = ["sentrix", f"severity-{incident.tier}", *[f"attack-{a}" for a in incident.attack_types]]
+    return summary, lines, labels
+
+
 class TicketBody(BaseModel):
-    provider: str  # 'jira' | 'servicenow'
+    provider: str = "jira"
 
 
 @router.post("/incidents/{incident_id}/ticket")
@@ -254,22 +276,64 @@ async def create_ticket(
     user: User = Depends(require_role("admin", "analyst")),
     session: AsyncSession = Depends(get_session),
 ):
-    """Simulated ticket creation - no real Jira/ServiceNow account configured, so this just
-    records a placeholder reference instead of making an outbound API call."""
-    if body.provider not in ("jira", "servicenow"):
-        raise HTTPException(status_code=400, detail="provider must be 'jira' or 'servicenow'")
-    if await session.get(Incident, incident_id) is None:
+    """Creates a real Jira issue for the incident when JIRA_* is configured; otherwise records a
+    simulated placeholder. One unfinished ticket per incident - a new one is allowed only after
+    the previous one reaches a Jira 'done' status."""
+    if body.provider != "jira":
+        raise HTTPException(status_code=400, detail="Only the 'jira' provider is supported")
+    incident = await session.get(Incident, incident_id)
+    if incident is None:
         raise HTTPException(status_code=404, detail="Incident not found")
 
-    count = (await session.execute(select(TicketLink))).scalars().all()
-    prefix = "SOC" if body.provider == "jira" else "INC"
-    external_ref = f"{prefix}-{1000 + len(count)}"
+    existing = (await session.execute(select(TicketLink).where(TicketLink.incident_id == incident_id))).scalars().all()
+    open_ticket = next((t for t in existing if not t.simulated and t.status_category != "done"), None)
+    if open_ticket is not None:
+        raise HTTPException(status_code=409, detail=f"Incident already has an open ticket ({open_ticket.external_ref})")
 
-    ticket = TicketLink(incident_id=incident_id, provider=body.provider, external_ref=external_ref, created_by=user.id)
+    now = datetime.now(timezone.utc)
+    if jira.configured():
+        alerts = (await session.execute(select(Alert).where(Alert.incident_id == incident_id))).scalars().all()
+        summary, lines, labels = _ticket_content(incident, list(alerts))
+        try:
+            key, url = await asyncio.to_thread(jira.create_issue, summary, lines, labels, incident.tier)
+            status, category = await asyncio.to_thread(jira.get_status, key)
+        except jira.JiraError as e:
+            raise HTTPException(status_code=502, detail=str(e)) from e
+        ticket = TicketLink(
+            incident_id=incident_id, provider="jira", external_ref=key, url=url, created_by=user.id,
+            simulated=False, status=status, status_category=category, status_synced_at=now,
+        )
+    else:
+        total = len((await session.execute(select(TicketLink))).scalars().all())
+        ticket = TicketLink(
+            incident_id=incident_id, provider="jira", external_ref=f"SOC-{1000 + total}", created_by=user.id,
+            simulated=True, status="Simulated", status_category="new",
+        )
+
     session.add(ticket)
+    await audit.log(session, user.id, "ticket.created", "incident", incident_id,
+                    {"ref": ticket.external_ref, "simulated": ticket.simulated})
     await session.commit()
     await session.refresh(ticket)
-    return {
-        "ticket_id": str(ticket.id), "provider": ticket.provider, "external_ref": ticket.external_ref,
-        "url": ticket.url, "created_at": ticket.created_at.isoformat(), "simulated": True,
-    }
+    return _ticket_out(ticket)
+
+
+@router.post("/incidents/{incident_id}/tickets/sync")
+async def sync_tickets(
+    incident_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Pulls the live Jira status for this incident's real tickets."""
+    tickets = (await session.execute(select(TicketLink).where(TicketLink.incident_id == incident_id))).scalars().all()
+    if jira.configured():
+        for t in tickets:
+            if t.simulated or (t.status_category == "done" and t.status_synced_at is not None):
+                continue
+            try:
+                t.status, t.status_category = await asyncio.to_thread(jira.get_status, t.external_ref)
+                t.status_synced_at = datetime.now(timezone.utc)
+            except jira.JiraError as e:
+                raise HTTPException(status_code=502, detail=str(e)) from e
+        await session.commit()
+    return [_ticket_out(t) for t in tickets]
