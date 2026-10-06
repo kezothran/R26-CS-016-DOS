@@ -263,3 +263,43 @@ create policy snapshots_read_all on snapshots for select
 create policy snapshots_write_admin_analyst on snapshots for all
     using (coalesce(current_setting('request.jwt.claims', true)::json->>'role', '') in ('admin', 'analyst'))
     with check (coalesce(current_setting('request.jwt.claims', true)::json->>'role', '') in ('admin', 'analyst'));
+
+-- Response playbooks: editable per attack type and/or severity tier. NULL attack_type/tier means
+-- "any". `steps` is a JSON array of {title, action} where action is null, 'propose_block' or
+-- 'open_ticket'.
+create table if not exists playbooks (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    attack_type text,
+    tier text,
+    steps jsonb not null default '[]'::jsonb,
+    enabled boolean not null default true,
+    created_by uuid references users(id),
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+create index if not exists idx_playbooks_attack_type on playbooks (attack_type);
+
+-- Per-incident checklist snapshot of the matching playbook(s), so later playbook edits don't
+-- rewrite history on incidents already being worked.
+create table if not exists incident_playbook_steps (
+    id uuid primary key default gen_random_uuid(),
+    incident_id uuid not null references incidents(id),
+    playbook_id uuid references playbooks(id) on delete set null,
+    playbook_name text not null,
+    step_index integer not null,
+    title text not null,
+    action text,
+    done boolean not null default false,
+    done_by uuid references users(id),
+    done_at timestamptz,
+    unique (incident_id, step_index)
+);
+create index if not exists idx_incident_playbook_steps_incident_id on incident_playbook_steps (incident_id);
+
+-- Real Jira tickets: live status + whether the row is a simulated placeholder (all pre-existing
+-- rows are simulated).
+alter table ticket_links add column if not exists simulated boolean not null default true;
+alter table ticket_links add column if not exists status text;
+alter table ticket_links add column if not exists status_category text;
+alter table ticket_links add column if not exists status_synced_at timestamptz;

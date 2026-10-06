@@ -125,9 +125,9 @@ class IncidentNote(Base):
 
 
 class TicketLink(Base):
-    """Simulated ticket-system link - no outbound HTTP call, no real Jira/ServiceNow account to
-    hit. `external_ref` is a generated placeholder (e.g. "SOC-1234"), clearly labeled as
-    simulated in the UI.
+    """Ticket link for an incident. Real Jira issues (simulated=False) store the Jira key in
+    `external_ref` plus its browse `url` and live status; simulated=True rows are placeholder
+    references created when Jira isn't configured.
     """
 
     __tablename__ = "ticket_links"
@@ -139,6 +139,11 @@ class TicketLink(Base):
     url: Mapped[str | None] = mapped_column(String, nullable=True)
     created_by: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Real Jira tickets carry the live Jira status; legacy/fallback rows are simulated placeholders.
+    simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str | None] = mapped_column(String, nullable=True)
+    status_category: Mapped[str | None] = mapped_column(String, nullable=True)  # new | indeterminate | done
+    status_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BlockAction(Base):
@@ -221,3 +226,40 @@ class AuditLog(Base):
     target_id: Mapped[str] = mapped_column(String)
     details: Mapped[dict] = mapped_column(JSONB, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class Playbook(Base):
+    """Editable response playbook. NULL attack_type / tier means "any" - the most specific
+    enabled match wins (see app/api/playbooks.py::_pick_playbooks). `steps` is a list of
+    {"title": str, "action": None | "propose_block" | "open_ticket"}.
+    """
+
+    __tablename__ = "playbooks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String)
+    attack_type: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    tier: Mapped[str | None] = mapped_column(String, nullable=True)
+    steps: Mapped[list] = mapped_column(JSONB, default=list)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class IncidentPlaybookStep(Base):
+    """One checklist item of a playbook, snapshotted onto an incident the first time its
+    playbook is opened. Ticking it records who/when (and is audited)."""
+
+    __tablename__ = "incident_playbook_steps"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    incident_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("incidents.id"), index=True)
+    playbook_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("playbooks.id", ondelete="SET NULL"), nullable=True)
+    playbook_name: Mapped[str] = mapped_column(String)
+    step_index: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String)
+    action: Mapped[str | None] = mapped_column(String, nullable=True)
+    done: Mapped[bool] = mapped_column(Boolean, default=False)
+    done_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

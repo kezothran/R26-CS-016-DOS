@@ -11,6 +11,7 @@ from app.api import (
     block_actions as block_actions_api,
     health,
     metrics as metrics_api,
+    playbooks as playbooks_api,
     scoring as scoring_api,
     settings as settings_api,
     snapshots as snapshots_api,
@@ -59,6 +60,7 @@ app.include_router(alerts_api.router)
 app.include_router(block_actions_api.router)
 app.include_router(metrics_api.router)
 app.include_router(users_api.router)
+app.include_router(playbooks_api.router)
 app.include_router(audit_api.router)
 app.include_router(snapshots_api.router)
 app.include_router(health.router)
@@ -69,5 +71,6 @@ app.include_router(ws_router)
 async def on_startup() -> None:
     check_capture_privileges()
     await resolve_orphaned_incidents()
+    await playbooks_api.seed_default_playbooks()
     asyncio.create_task(run_detection_loop())
     logger.info("Detection loop started.")
