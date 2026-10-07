@@ -1,0 +1,25 @@
+# Cloud deployment - the server receives traffic only from remote agents (LOCAL_CAPTURE=false),
+# so this never needs Administrator/root/Npcap. Secrets (DATABASE_URL, JWT_SECRET, SMTP, Jira,
+# Meta WhatsApp, etc.) live in backend/.env, which is gitignored and never built into the image.
+services:
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      LOCAL_CAPTURE: "false"
+    ports:
+      - "8000:8000"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Browser-facing URL of the backend above - rebuild the image if this changes (Next.js
+        # inlines NEXT_PUBLIC_* at build time, not at container start).
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
