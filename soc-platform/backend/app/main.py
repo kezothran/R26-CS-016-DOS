@@ -12,6 +12,8 @@ from app.api import (
     health,
     metrics as metrics_api,
     playbooks as playbooks_api,
+    reports as reports_api,
+    tickets as tickets_api,
     scoring as scoring_api,
     settings as settings_api,
     snapshots as snapshots_api,
@@ -21,6 +23,7 @@ from app.api import (
 from app.capture.privileges import check_capture_privileges
 from app.detection.loop import run_detection_loop
 from app.scoring.engine import resolve_orphaned_incidents
+from app.summary import run_summary_scheduler
 from app.ws.routes import router as ws_router
 
 # Without this, every logging.getLogger("soc").info/.warning/.exception call in the app
@@ -61,6 +64,8 @@ app.include_router(block_actions_api.router)
 app.include_router(metrics_api.router)
 app.include_router(users_api.router)
 app.include_router(playbooks_api.router)
+app.include_router(reports_api.router)
+app.include_router(tickets_api.router)
 app.include_router(audit_api.router)
 app.include_router(snapshots_api.router)
 app.include_router(health.router)
@@ -73,4 +78,5 @@ async def on_startup() -> None:
     await resolve_orphaned_incidents()
     await playbooks_api.seed_default_playbooks()
     asyncio.create_task(run_detection_loop())
+    asyncio.create_task(run_summary_scheduler())
     logger.info("Detection loop started.")

@@ -185,6 +185,7 @@ export interface AdminUser {
   analyst_tier: 1 | 2 | 3 | null;
   must_change_password: boolean;
   created_at: string;
+  two_factor?: boolean;
 }
 
 // --- Snapshots -----------------------------------------------------------------------------
@@ -267,4 +268,64 @@ export interface IncidentPlaybook {
   steps: IncidentPlaybookStep[];
   done: number;
   total: number;
+}
+
+export interface TicketRow {
+  ticket_id: string;
+  external_ref: string;
+  url: string | null;
+  simulated: boolean;
+  status: string | null;
+  status_category: "new" | "indeterminate" | "done" | null;
+  created_at: string;
+  created_by: string;
+  status_synced_at: string | null;
+  incident_id: string;
+  tier: string;
+  attack_types: string[];
+  src_ips: string[];
+}
+
+export interface TicketDetails {
+  key: string;
+  summary: string | null;
+  url: string;
+  status: string;
+  status_category: "new" | "indeterminate" | "done";
+  assignee: string | null;
+  priority: string | null;
+  created: string | null;
+  updated: string | null;
+  comments: { author: string; at: string; body: string }[];
+  history: { at: string; by: string; from: string | null; to: string | null }[];
+}
+
+export interface TicketPreview {
+  summary: string;
+  description: string;
+  labels: string[];
+  priority: string;
+  priorities: string[];
+  jira_configured: boolean;
+  project_key: string | null;
+  open_ticket: string | null;
+}
+
+export interface LiveOriginPoint {
+  src_ip: string;
+  count: number;
+  max_tier: string;
+  attack_types: string[];
+  last_seen: string;
+  country: string | null;
+  country_code: string | null;
+  city: string | null;
+  lat: number | null;
+  lon: number | null;
+}
+
+export interface LiveOrigins {
+  geoip_ready: boolean;
+  local_count: number;
+  points: LiveOriginPoint[];
 }
