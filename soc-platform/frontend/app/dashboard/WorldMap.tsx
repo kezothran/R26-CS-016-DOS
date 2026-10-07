@@ -68,12 +68,12 @@ function landDistance(lon: number, lat: number): number {
   return best;
 }
 
-const LON_STEP = 4;
-const LAT_STEP = 3.6;
-const LAT_TOP = 78;
-const LAT_BOTTOM = -60;
+export const LON_STEP = 4;
+export const LAT_STEP = 3.6;
+export const LAT_TOP = 78;
+export const LAT_BOTTOM = -60;
 
-function buildDots() {
+export function buildDots() {
   const rand = mulberry32(1337);
   const dots: { x: number; y: number; r: number }[] = [];
   for (let lat = LAT_TOP; lat >= LAT_BOTTOM; lat -= LAT_STEP) {

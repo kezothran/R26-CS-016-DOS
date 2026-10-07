@@ -7,7 +7,7 @@ with a ground-truth "attack actually started at T0" to diff against. MTTA/MTTR a
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select
@@ -139,6 +139,52 @@ async def attack_origins(
         entry["count"] += 1
 
     return sorted(by_country.values(), key=lambda e: -e["count"])
+
+
+@router.get("/live-origins")
+async def live_origins(
+    minutes: int = 15,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Recent attacker IPs with coordinates, for the live map. Private/loopback addresses can't be
+    geolocated and are counted separately (`local_count`) instead of silently dropped."""
+    import ipaddress
+
+    since = datetime.now(timezone.utc) - timedelta(minutes=min(max(minutes, 1), 1440))
+    rows = (await session.execute(
+        select(Alert.src_ip, Alert.severity, Alert.attack_type, Alert.created_at).where(Alert.created_at >= since)
+    )).all()
+
+    grouped: dict[str, dict] = {}
+    local_count = 0
+    for src_ip, severity, attack_type, created_at in rows:
+        try:
+            if not ipaddress.ip_address(src_ip).is_global:
+                local_count += 1
+                continue
+        except ValueError:
+            continue
+        e = grouped.setdefault(src_ip, {
+            "src_ip": src_ip, "count": 0, "max_tier": "Low", "attack_types": set(), "last_seen": created_at,
+        })
+        e["count"] += 1
+        e["attack_types"].add(attack_type)
+        if created_at > e["last_seen"]:
+            e["last_seen"] = created_at
+        if TIER_RANK.get(_normalize_tier(severity), 0) > TIER_RANK.get(e["max_tier"], 0):
+            e["max_tier"] = _normalize_tier(severity)
+
+    points = []
+    for e in sorted(grouped.values(), key=lambda x: -x["count"])[:100]:
+        geo = geoip.lookup(e["src_ip"])
+        points.append({
+            "src_ip": e["src_ip"], "count": e["count"], "max_tier": e["max_tier"],
+            "attack_types": sorted(e["attack_types"]), "last_seen": e["last_seen"].isoformat(),
+            "country": geo["country"] if geo else None, "country_code": geo["country_code"] if geo else None,
+            "city": geo["city"] if geo else None, "lat": geo["lat"] if geo else None, "lon": geo["lon"] if geo else None,
+        })
+    return {"geoip_ready": geoip.ready(), "local_count": local_count, "points": points}
 
 
 def _normalize_tier(severity: str) -> str:
