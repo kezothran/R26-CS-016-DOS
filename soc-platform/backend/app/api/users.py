@@ -25,6 +25,7 @@ def _out(u: User) -> dict:
     return {
         "id": str(u.id), "email": u.email, "role": u.role, "analyst_tier": u.analyst_tier,
         "must_change_password": u.must_change_password, "created_at": u.created_at.isoformat(),
+        "two_factor": u.totp_enabled,
     }
 
 
@@ -104,6 +105,23 @@ async def patch_user(
     )
     await session.commit()
     await session.refresh(target)
+    return _out(target)
+
+
+@router.post("/{user_id}/reset-2fa")
+async def reset_two_factor(
+    user_id: str,
+    user: User = Depends(require_role("admin")),
+    session: AsyncSession = Depends(get_session),
+):
+    """Admin recovery path for a user who lost their authenticator device."""
+    target = await session.get(User, user_id)
+    if target is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    target.totp_enabled = False
+    target.totp_secret = None
+    await audit.log(session, user.id, "user.2fa_reset", "user", user_id, {"email": target.email})
+    await session.commit()
     return _out(target)
 
 

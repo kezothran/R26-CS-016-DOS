@@ -35,11 +35,31 @@ def create_access_token(user: User) -> str:
     return jwt.encode(payload, settings.jwt_secret, algorithm="HS256")
 
 
+def create_mfa_token(user: User) -> str:
+    """Short-lived token proving the password step passed. typ='mfa' means decode_token (used for
+    every API/WebSocket call) rejects it, so it can't be used as a session token."""
+    expire = datetime.now(timezone.utc) + timedelta(minutes=5)
+    return jwt.encode({"sub": str(user.id), "typ": "mfa", "exp": expire}, settings.jwt_secret, algorithm="HS256")
+
+
+def decode_mfa_token(token: str) -> dict:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Sign-in expired - enter your password again")
+    if payload.get("typ") != "mfa":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid sign-in token")
+    return payload
+
+
 def decode_token(token: str) -> dict:
     try:
-        return jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
+        payload = jwt.decode(token, settings.jwt_secret, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    if payload.get("typ") == "mfa":
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token")
+    return payload
 
 
 async def get_current_user(

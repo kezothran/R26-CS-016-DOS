@@ -20,6 +20,10 @@ class User(Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, default=True)
     # Display/routing label only (Tier 1/2/3 analyst), independent of the permission `role`.
     analyst_tier: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # TOTP two-factor auth (app/api/auth.py). The secret is set at setup time but only enforced
+    # at login once totp_enabled is true (i.e. after the user proved they can generate a code).
+    totp_secret: Mapped[str | None] = mapped_column(String, nullable=True)
+    totp_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 

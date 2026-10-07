@@ -18,3 +18,6 @@ bcrypt==4.0.1
 python-multipart==0.0.20
 geoip2==4.8.0
 requests==2.32.3
+reportlab==4.2.5
+pyotp==2.9.0
+qrcode[pil]==8.0

@@ -105,6 +105,17 @@ export default function UsersPage() {
     await load();
   }
 
+  async function resetTwoFactor(u: AdminUser) {
+    if (!window.confirm(`Turn off two-factor authentication for ${u.email}? They can set it up again after signing in.`)) return;
+    setError(null);
+    try {
+      await apiFetch(`/api/users/${u.id}/reset-2fa`, { method: "POST" });
+      await load();
+    } catch (e) {
+      setError(e instanceof ApiError ? e.message : "Failed to reset 2FA.");
+    }
+  }
+
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   async function deleteUser(u: AdminUser) {
@@ -323,7 +334,16 @@ export default function UsersPage() {
                   <td style={cellStyle}>{new Date(u.created_at).toLocaleDateString()}</td>
                   {admin && (
                     <td style={cellStyle}>
-                      <div style={{ display: "flex", gap: 6 }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+                        {u.two_factor && (
+                          <button
+                            onClick={() => resetTwoFactor(u)}
+                            title="2FA is on - click to reset it (user lost their authenticator)"
+                            style={{ fontSize: 10, padding: "3px 8px", borderRadius: 10, border: "1px solid var(--green)", color: "var(--green)", background: "transparent", cursor: "pointer", whiteSpace: "nowrap" }}
+                          >
+                            2FA · Reset
+                          </button>
+                        )}
                         <button
                           onClick={() => document.getElementById(`role-${u.id}`)?.focus()}
                           title="Edit role / tier"

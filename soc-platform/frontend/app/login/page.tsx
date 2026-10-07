@@ -42,6 +42,8 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [health, setHealth] = useState<HealthResponse | "unreachable" | null>(null);
   const [showForgotHint, setShowForgotHint] = useState(false);
+  const [mfaToken, setMfaToken] = useState<string | null>(null);
+  const [code, setCode] = useState("");
 
   // Public, unauthenticated endpoint - shows real engine state on the login screen instead of
   // static marketing copy (the point isn't decoration, it's proof the console is actually live).
@@ -49,18 +51,43 @@ export default function LoginPage() {
     apiFetch<HealthResponse>("/health").then(setHealth).catch(() => setHealth("unreachable"));
   }, []);
 
+  type LoginRes = { access_token: string; role: string; must_change_password: boolean; mfa_required?: boolean; mfa_token?: string | null };
+
+  function finish(res: LoginRes) {
+    setSession(res.access_token, res.role, remember);
+    router.push(res.must_change_password ? "/dashboard/change-password" : "/dashboard");
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
     try {
-      const res = await apiFetch<{ access_token: string; role: string; must_change_password: boolean }>(
-        "/auth/login",
-        { method: "POST", body: JSON.stringify({ email, password }) },
-      );
-      setSession(res.access_token, res.role, remember);
-      router.push(res.must_change_password ? "/dashboard/change-password" : "/dashboard");
+      const res = await apiFetch<LoginRes>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) });
+      if (res.mfa_required && res.mfa_token) {
+        setMfaToken(res.mfa_token);
+        setCode("");
+      } else {
+        finish(res);
+      }
     } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Couldn't reach the detection engine. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleCode(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    setLoading(true);
+    try {
+      finish(await apiFetch<LoginRes>("/auth/2fa/login", { method: "POST", body: JSON.stringify({ mfa_token: mfaToken, code }) }));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401 && /expired|invalid sign-in/i.test(err.message)) {
+        setMfaToken(null);
+        setPassword("");
+      }
       setError(err instanceof ApiError ? err.message : "Couldn't reach the detection engine. Check your connection and try again.");
     } finally {
       setLoading(false);
@@ -116,9 +143,36 @@ export default function LoginPage() {
               <span className="sx-card-brand-name">SENTRIX</span>
             </div>
 
-            <h2 className="sx-card-title sx-stagger" style={{ animationDelay: "230ms" }}>Welcome back</h2>
-            <p className="sx-card-sub sx-stagger" style={{ animationDelay: "290ms" }}>Sign in to access the SOC console.</p>
+            <h2 className="sx-card-title sx-stagger" style={{ animationDelay: "230ms" }}>{mfaToken ? "Two-factor verification" : "Welcome back"}</h2>
+            <p className="sx-card-sub sx-stagger" style={{ animationDelay: "290ms" }}>
+              {mfaToken ? "Enter the 6-digit code from your authenticator app." : "Sign in to access the SOC console."}
+            </p>
 
+            {mfaToken ? (
+              <form onSubmit={handleCode} style={{ display: "flex", flexDirection: "column" }}>
+                <Field label="Authentication code">
+                  <span className="sx-input-icon"><LockIcon /></span>
+                  <input
+                    inputMode="numeric" autoComplete="one-time-code" autoFocus required maxLength={7} value={code}
+                    onChange={(e) => setCode(e.target.value.replace(/[^0-9 ]/g, ""))}
+                    style={{ ...inputStyle, letterSpacing: "0.3em", fontFamily: "monospace" }} className="sx-input" placeholder="000000"
+                  />
+                </Field>
+                {error && (
+                  <div role="alert" className="sx-error">
+                    <span style={{ marginTop: 1, flexShrink: 0 }}><AlertIcon /></span>
+                    {error}
+                  </div>
+                )}
+                <button type="submit" disabled={loading || code.replace(/\s/g, "").length < 6} className="sx-submit" style={{ marginTop: error ? 14 : 22 }}>
+                  {loading && <Spinner />}
+                  {loading ? "Verifying" : "Verify and sign in"}
+                </button>
+                <button type="button" className="sx-link" style={{ marginTop: 14 }} onClick={() => { setMfaToken(null); setError(null); setPassword(""); }}>
+                  Back to sign in
+                </button>
+              </form>
+            ) : (
             <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column" }}>
               <div className="sx-stagger" style={{ animationDelay: "350ms" }}>
                 <Field label="Email">
@@ -195,6 +249,7 @@ export default function LoginPage() {
                 </span>
               </p>
             </form>
+            )}
           </section>
         </div>
 

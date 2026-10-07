@@ -303,3 +303,7 @@ alter table ticket_links add column if not exists simulated boolean not null def
 alter table ticket_links add column if not exists status text;
 alter table ticket_links add column if not exists status_category text;
 alter table ticket_links add column if not exists status_synced_at timestamptz;
+
+-- TOTP two-factor authentication.
+alter table users add column if not exists totp_secret text;
+alter table users add column if not exists totp_enabled boolean not null default false;
