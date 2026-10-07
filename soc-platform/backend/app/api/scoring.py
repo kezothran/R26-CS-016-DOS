@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -265,8 +265,37 @@ def _ticket_content(incident: Incident, alerts: list[Alert]) -> tuple[str, list[
     return summary, lines, labels
 
 
+PRIORITIES = ("Highest", "High", "Medium", "Low")
+
+
 class TicketBody(BaseModel):
     provider: str = "jira"
+    # Optional analyst edits from the create-ticket form; defaults come from _ticket_content.
+    summary: str | None = Field(default=None, max_length=250)
+    description: str | None = Field(default=None, max_length=8000)
+    priority: str | None = None
+
+
+@router.get("/incidents/{incident_id}/ticket/preview")
+async def ticket_preview(
+    incident_id: str,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+):
+    """Pre-filled create-ticket form content, so the analyst can edit it before it is sent."""
+    incident = await session.get(Incident, incident_id)
+    if incident is None:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    alerts = (await session.execute(select(Alert).where(Alert.incident_id == incident_id))).scalars().all()
+    summary, lines, labels = _ticket_content(incident, list(alerts))
+    existing = (await session.execute(select(TicketLink).where(TicketLink.incident_id == incident_id))).scalars().all()
+    open_ticket = next((t for t in existing if not t.simulated and t.status_category != "done"), None)
+    return {
+        "summary": summary, "description": "\n".join(lines), "labels": labels,
+        "priority": jira.PRIORITY.get(incident.tier or "", "Medium"), "priorities": list(PRIORITIES),
+        "jira_configured": jira.configured(), "project_key": jira.settings.jira_project_key,
+        "open_ticket": open_ticket.external_ref if open_ticket else None,
+    }
 
 
 @router.post("/incidents/{incident_id}/ticket")
@@ -294,8 +323,14 @@ async def create_ticket(
     if jira.configured():
         alerts = (await session.execute(select(Alert).where(Alert.incident_id == incident_id))).scalars().all()
         summary, lines, labels = _ticket_content(incident, list(alerts))
+        if body.priority is not None and body.priority not in PRIORITIES:
+            raise HTTPException(status_code=400, detail=f"priority must be one of {PRIORITIES}")
+        if body.summary and body.summary.strip():
+            summary = body.summary.strip()
+        if body.description and body.description.strip():
+            lines = body.description.strip().splitlines()
         try:
-            key, url = await asyncio.to_thread(jira.create_issue, summary, lines, labels, incident.tier)
+            key, url = await asyncio.to_thread(jira.create_issue, summary, lines, labels, incident.tier, body.priority)
             status, category = await asyncio.to_thread(jira.get_status, key)
         except jira.JiraError as e:
             raise HTTPException(status_code=502, detail=str(e)) from e

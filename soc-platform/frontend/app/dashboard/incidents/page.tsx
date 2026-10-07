@@ -5,6 +5,7 @@ import { apiFetch, downloadFile } from "@/lib/api";
 import { canWrite, getRole } from "@/lib/auth";
 import { useSocStream } from "@/lib/SocStreamContext";
 import { severityColor, themeFor, tierTheme } from "@/lib/theme";
+import { CreateTicketForm, TicketCard } from "../tickets/ticket-ui";
 import type {
   AdminUser, BlockAction, IncidentDetail, IncidentPlaybook, IncidentSummary, Resolution, WorkflowStatus,
 } from "@/lib/types";
@@ -58,6 +59,11 @@ export default function IncidentsPage() {
   const [incidents, setIncidents] = useState<IncidentSummary[] | null>(null);
   const [prevCounts, setPrevCounts] = useState<Record<string, number> | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  // Deep link from the Tickets page: /dashboard/incidents?open=<incident id>
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("open");
+    if (id) setSelected(id);
+  }, []);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
@@ -451,7 +457,7 @@ function IncidentDetailPanel({
   const [busy, setBusy] = useState(false);
   const [playbook, setPlaybook] = useState<IncidentPlaybook | null>(null);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
-  const [ticketError, setTicketError] = useState<string | null>(null);
+  const [showTicketForm, setShowTicketForm] = useState(false);
 
   const load = useCallback(async () => {
     setDetail(await apiFetch<IncidentDetail>(`/api/incidents/${incidentId}`));
@@ -518,32 +524,6 @@ function IncidentDetailPanel({
     }
   }
 
-  async function createTicket() {
-    setBusy(true);
-    setTicketError(null);
-    try {
-      await apiFetch(`/api/incidents/${incidentId}/ticket`, { method: "POST", body: JSON.stringify({ provider: "jira" }) });
-      await load();
-    } catch (e) {
-      setTicketError(e instanceof Error ? e.message : "Ticket creation failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function syncTickets() {
-    setBusy(true);
-    setTicketError(null);
-    try {
-      await apiFetch(`/api/incidents/${incidentId}/tickets/sync`, { method: "POST" });
-      await load();
-    } catch (e) {
-      setTicketError(e instanceof Error ? e.message : "Status refresh failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function decideBlock(id: string, action: "execute" | "dismiss") {
     setBusy(true);
     try {
@@ -564,6 +544,12 @@ function IncidentDetailPanel({
           </div>
           <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--mono)" }}>{detail.src_ips.join(", ")} · {detail.interface}</div>
         </div>
+        <button
+          onClick={() => downloadFile(`/api/incidents/${incidentId}/report.pdf`, `incident-${incidentId.slice(0, 8)}.pdf`).catch(() => setActionMsg("Could not download the report."))}
+          style={btnStyle}
+        >
+          Download PDF
+        </button>
         <button onClick={onClose} style={{ ...btnStyle, background: "transparent" }}>Close</button>
       </div>
 
@@ -672,41 +658,30 @@ function IncidentDetailPanel({
 
       {tab === "ticket" && (
         <div>
-          <div style={{ fontSize: 11, color: "var(--dim)", marginBottom: 12 }}>
-            Creates a Jira issue pre-filled with this incident&apos;s severity, source IPs and attack types. One open ticket per incident.
-          </div>
-          {writable && (
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <button onClick={createTicket} disabled={busy} style={btnStyle}>Create Jira Ticket</button>
-              {detail.tickets.some((tk) => !tk.simulated) && (
-                <button onClick={syncTickets} disabled={busy} style={{ ...btnStyle, background: "transparent" }}>Refresh status</button>
-              )}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+            <div style={{ fontSize: 11, color: "var(--dim)", flex: 1 }}>
+              Jira tickets for this incident, with live status. One open ticket at a time.
             </div>
+            {writable && !showTicketForm && (
+              <button onClick={() => setShowTicketForm(true)} style={btnStyle}>+ New ticket</button>
+            )}
+          </div>
+          {showTicketForm && (
+            <CreateTicketForm
+              incidentId={incidentId}
+              onCancel={() => setShowTicketForm(false)}
+              onCreated={async () => { setShowTicketForm(false); await load(); onChanged(); }}
+            />
           )}
-          {ticketError && <div style={{ color: "var(--red)", fontSize: 12, marginBottom: 10 }}>{ticketError}</div>}
-          {detail.tickets.length === 0 ? (
-            <div style={{ color: "var(--dim)", fontSize: 12 }}>No tickets created</div>
+          {detail.tickets.length === 0 && !showTicketForm ? (
+            <div style={{ color: "var(--dim)", fontSize: 12 }}>No tickets created yet.</div>
           ) : (
-            detail.tickets.map((tk) => {
-              const done = tk.status_category === "done";
-              const color = done ? "var(--green)" : tk.status_category === "indeterminate" ? "var(--amber)" : "var(--blue)";
-              return (
-                <div key={tk.ticket_id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "7px 0", fontSize: 12, borderBottom: "1px solid var(--raised)" }}>
-                  <span>
-                    {tk.url ? (
-                      <a href={tk.url} target="_blank" rel="noreferrer" style={{ fontFamily: "var(--mono)", color: "var(--blue)" }}>{tk.external_ref}</a>
-                    ) : (
-                      <span style={{ fontFamily: "var(--mono)" }}>{tk.external_ref}</span>
-                    )}
-                    {tk.simulated && <em style={{ color: "var(--dim)", fontStyle: "normal", fontSize: 10 }}> (simulated)</em>}
-                    {tk.status && !tk.simulated && (
-                      <span style={{ marginLeft: 8, fontSize: 10, padding: "2px 8px", borderRadius: 10, border: `1px solid ${color}`, color }}>{tk.status}</span>
-                    )}
-                  </span>
-                  <span style={{ color: "var(--muted)" }}>{new Date(tk.created_at).toLocaleString()}</span>
-                </div>
-              );
-            })
+            detail.tickets.map((tk) => (
+              <TicketCard
+                key={tk.ticket_id} ticketId={tk.ticket_id} externalRef={tk.external_ref} url={tk.url}
+                simulated={tk.simulated} status={tk.status} category={tk.status_category} createdAt={tk.created_at}
+              />
+            ))
           )}
         </div>
       )}
