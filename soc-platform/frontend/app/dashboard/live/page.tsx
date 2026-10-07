@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import HostTag from "../HostTag";
 import { apiFetch } from "@/lib/api";
 import { canWrite, getRole } from "@/lib/auth";
 import { useSocStream } from "@/lib/SocStreamContext";
@@ -344,7 +345,7 @@ function FlowRow({ flow }: { flow: LiveFlow }) {
       <td style={{ ...cellStyle, fontFamily: "var(--mono)" }}>{flow.src}</td>
       <td style={{ ...cellStyle, fontFamily: "var(--mono)" }}>{flow.dst}</td>
       <td style={cellStyle}>{flow.packets.toLocaleString()}</td>
-      <td style={cellStyle}>{flow.iface}</td>
+      <td style={cellStyle}><HostTag iface={flow.iface} compact /></td>
       <td style={cellStyle}>
         <span
           style={{

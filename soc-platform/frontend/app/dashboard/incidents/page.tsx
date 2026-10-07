@@ -5,6 +5,7 @@ import { apiFetch, downloadFile } from "@/lib/api";
 import { canWrite, getRole } from "@/lib/auth";
 import { useSocStream } from "@/lib/SocStreamContext";
 import { severityColor, themeFor, tierTheme } from "@/lib/theme";
+import HostTag from "../HostTag";
 import { CreateTicketForm, TicketCard } from "../tickets/ticket-ui";
 import type {
   AdminUser, BlockAction, IncidentDetail, IncidentPlaybook, IncidentSummary, Resolution, WorkflowStatus,
@@ -185,7 +186,7 @@ export default function IncidentsPage() {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
             <thead>
               <tr>
-                {["Severity", "Attack Type", "Source IP", "Impact", "Status", "Assigned", "Last Seen", ""].map((h) => (
+                {["Severity", "Attack Type", "PC", "Source IP", "Impact", "Status", "Assigned", "Last Seen", ""].map((h) => (
                   <th key={h} style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
                     {h}
                   </th>
@@ -194,9 +195,9 @@ export default function IncidentsPage() {
             </thead>
             <tbody>
               {incidents === null ? (
-                <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--dim)" }}>Loading...</td></tr>
+                <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: "var(--dim)" }}>Loading...</td></tr>
               ) : incidents.length === 0 ? (
-                <tr><td colSpan={8} style={{ padding: 20, textAlign: "center", color: "var(--dim)" }}>No incidents match these filters</td></tr>
+                <tr><td colSpan={9} style={{ padding: 20, textAlign: "center", color: "var(--dim)" }}>No incidents match these filters</td></tr>
               ) : (
                 pageIncidents.map((inc) => {
                   const impactColor = severityColor(inc.tier);
@@ -217,6 +218,9 @@ export default function IncidentsPage() {
                         >
                           {ATTACK_CATEGORY}
                         </span>
+                      </td>
+                      <td style={cellStyle}>
+                        <HostTag iface={inc.interface} compact />
                       </td>
                       <td style={cellStyle}>
                         <div style={{ display: "flex", alignItems: "center", gap: 6, fontFamily: "var(--mono)" }}>
@@ -542,6 +546,7 @@ function IncidentDetailPanel({
             <SeverityPill tier={detail.tier} />
             <span style={{ fontSize: 13, fontWeight: 600 }}>{detail.attack_types.map((t2) => themeFor(t2).label).join(" + ")}</span>
           </div>
+          <div style={{ marginBottom: 4 }}><HostTag iface={detail.interface} /></div>
           <div style={{ fontSize: 11, color: "var(--muted)", fontFamily: "var(--mono)" }}>{detail.src_ips.join(", ")} · {detail.interface}</div>
         </div>
         <button

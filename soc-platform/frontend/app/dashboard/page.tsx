@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import HostTag from "./HostTag";
 import { apiFetch } from "@/lib/api";
 import { canWrite, getRole } from "@/lib/auth";
 import { useSocStream } from "@/lib/SocStreamContext";
@@ -308,7 +309,7 @@ export default function OverviewPage() {
                       <td style={cellStyle}>{a.flows}</td>
                       <td style={cellStyle}>{a.conf.toFixed(1)}%</td>
                       <td style={cellStyle}><SeverityPill tier={a.tier} /></td>
-                      <td style={cellStyle}>{a.iface}</td>
+                      <td style={cellStyle}><HostTag iface={a.iface} compact /></td>
                     </tr>
                   ))
                 )}
@@ -387,7 +388,7 @@ function ActiveIncidentsBox({ incidents }: { incidents: ActiveIncident[] }) {
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
             <tr>
-              {["Attack Types", "Source IPs", "Impact", "Severity", "Confidence", "Interface", ...(writable ? ["Action"] : [])].map((h) => (
+              {["Attack Types", "PC", "Source IPs", "Impact", "Severity", "Confidence", ...(writable ? ["Action"] : [])].map((h) => (
                 <th key={h} style={{ textAlign: "left", padding: "8px 10px", fontSize: 10, textTransform: "uppercase", color: "var(--muted)", borderBottom: "1px solid var(--border)" }}>
                   {h}
                 </th>
@@ -401,11 +402,11 @@ function ActiveIncidentsBox({ incidents }: { incidents: ActiveIncident[] }) {
               incidents.map((inc) => (
                 <tr key={inc.incident_id} className="row-hover">
                   <td style={cellStyle}>{inc.attack_types.map((t) => themeFor(t).label).join(" + ")}</td>
+                  <td style={cellStyle}><HostTag iface={inc.interface} compact /></td>
                   <td style={{ ...cellStyle, fontFamily: "var(--mono)" }}>{inc.src_ips.join(", ")}</td>
                   <td style={cellStyle}>{inc.combined_impact.toFixed(1)}</td>
                   <td style={cellStyle}><SeverityPill tier={inc.tier} /></td>
                   <td style={cellStyle}>{inc.confidence}</td>
-                  <td style={cellStyle}>{inc.interface}</td>
                   {writable && (
                     <td style={cellStyle}>
                       <button
