@@ -16,8 +16,9 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 
-from app import settings_cache, whitelist_cache
+from app import agents_buffer, settings_cache, whitelist_cache
 from app.capture.engine import capture_window
+from app.config import settings as app_settings
 from app.capture.interfaces import list_interfaces
 from app.db.base import SessionLocal
 from app.db.models import Alert
@@ -117,8 +118,17 @@ def _active_ifaces(cfg: dict) -> list[str]:
     ]
 
 
+async def _idle_window(window: int) -> dict:
+    """Cloud mode (LOCAL_CAPTURE=false): nothing to sniff here - just wait one window so agent
+    traffic received in the meantime is picked up by the next cycle."""
+    await asyncio.sleep(window)
+    return {}
+
+
 def _start_capture(cfg: dict) -> asyncio.Task:
     window = cfg.get("window_secs", 5)
+    if not app_settings.local_capture:
+        return asyncio.create_task(_idle_window(window))
     return asyncio.create_task(
         asyncio.to_thread(capture_window, _active_ifaces(cfg), window, whitelist_cache.is_whitelisted)
     )
@@ -145,6 +155,9 @@ async def _run_cycle(cycle: int, capture_task: asyncio.Task) -> asyncio.Task:
     _t0 = time.time()
 
     captured = await capture_task
+    # Remote agents' windows (already validated and tagged "<iface>@<host>") join the local capture.
+    for bucket, rows in agents_buffer.drain().items():
+        captured.setdefault(bucket, []).extend(rows)
 
     # Independent reads on separate sessions - safe and worthwhile to run concurrently, unlike
     # the writes below (which share id-generation/ordering concerns that make a shared session

@@ -307,3 +307,32 @@ alter table ticket_links add column if not exists status_synced_at timestamptz;
 -- TOTP two-factor authentication.
 alter table users add column if not exists totp_secret text;
 alter table users add column if not exists totp_enabled boolean not null default false;
+
+-- Multi-host: remote agents that capture on other PCs/servers and ship packet metadata to the cloud.
+create table if not exists agents (
+    id uuid primary key default gen_random_uuid(),
+    name text not null,
+    hostname text not null,
+    os text,
+    agent_version text,
+    remote_ip text,
+    interfaces jsonb not null default '[]'::jsonb,
+    key_hash text not null,
+    revoked boolean not null default false,
+    enrolled_at timestamptz not null default now(),
+    last_seen_at timestamptz,
+    last_window_packets integer not null default 0,
+    total_packets bigint not null default 0
+);
+
+-- One-time enrolment tokens an admin creates; stored hashed, consumed on first use.
+create table if not exists agent_tokens (
+    id uuid primary key default gen_random_uuid(),
+    token_hash text not null unique,
+    note text,
+    created_by uuid references users(id),
+    created_at timestamptz not null default now(),
+    expires_at timestamptz not null,
+    used_at timestamptz,
+    used_by_agent uuid references agents(id) on delete set null
+);

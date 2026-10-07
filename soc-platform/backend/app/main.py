@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api import (
+    agents as agents_api,
     alerts as alerts_api,
     audit as audit_api,
     auth,
@@ -21,6 +22,7 @@ from app.api import (
     whitelist,
 )
 from app.capture.privileges import check_capture_privileges
+from app.config import settings
 from app.detection.loop import run_detection_loop
 from app.scoring.engine import resolve_orphaned_incidents
 from app.summary import run_summary_scheduler
@@ -64,6 +66,8 @@ app.include_router(block_actions_api.router)
 app.include_router(metrics_api.router)
 app.include_router(users_api.router)
 app.include_router(playbooks_api.router)
+app.include_router(agents_api.admin_router)
+app.include_router(agents_api.agent_router)
 app.include_router(reports_api.router)
 app.include_router(tickets_api.router)
 app.include_router(audit_api.router)
@@ -74,9 +78,22 @@ app.include_router(ws_router)
 
 @app.on_event("startup")
 async def on_startup() -> None:
-    check_capture_privileges()
-    await resolve_orphaned_incidents()
-    await playbooks_api.seed_default_playbooks()
+    if settings.local_capture:
+        check_capture_privileges()
+    else:
+        logger.info("LOCAL_CAPTURE=false - cloud mode, waiting for agents (no local sniffing).")
+    # The database is remote (Supabase): a momentary DNS/network blip at the exact second of startup
+    # used to crash the whole backend. Retry a few times before giving up.
+    for attempt in range(1, 7):
+        try:
+            await resolve_orphaned_incidents()
+            await playbooks_api.seed_default_playbooks()
+            break
+        except Exception as exc:
+            if attempt == 6:
+                raise
+            logger.warning("Startup database check failed (attempt %d/6): %s - retrying in 5s", attempt, exc)
+            await asyncio.sleep(5)
     asyncio.create_task(run_detection_loop())
     asyncio.create_task(run_summary_scheduler())
     logger.info("Detection loop started.")

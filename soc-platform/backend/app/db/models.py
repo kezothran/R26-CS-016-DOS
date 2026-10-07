@@ -267,3 +267,39 @@ class IncidentPlaybookStep(Base):
     done: Mapped[bool] = mapped_column(Boolean, default=False)
     done_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     done_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class Agent(Base):
+    """A remote capture agent installed on another PC/server (see /agent and app/api/agents.py).
+    Only a SHA-256 hash of its key is stored; the key itself is shown once at enrolment."""
+
+    __tablename__ = "agents"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String)
+    hostname: Mapped[str] = mapped_column(String)
+    os: Mapped[str | None] = mapped_column(String, nullable=True)
+    agent_version: Mapped[str | None] = mapped_column(String, nullable=True)
+    remote_ip: Mapped[str | None] = mapped_column(String, nullable=True)
+    interfaces: Mapped[list] = mapped_column(JSONB, default=list)
+    key_hash: Mapped[str] = mapped_column(String)
+    revoked: Mapped[bool] = mapped_column(Boolean, default=False)
+    enrolled_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_window_packets: Mapped[int] = mapped_column(Integer, default=0)
+    total_packets: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class AgentToken(Base):
+    """One-time enrolment token created by an admin; stored hashed, valid until expires_at, consumed on first use."""
+
+    __tablename__ = "agent_tokens"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    token_hash: Mapped[str] = mapped_column(String, unique=True)
+    note: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_by: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    used_by_agent: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("agents.id", ondelete="SET NULL"), nullable=True)

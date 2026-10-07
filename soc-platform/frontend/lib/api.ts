@@ -60,6 +60,25 @@ export async function downloadFile(path: string, filename: string): Promise<void
   URL.revokeObjectURL(url);
 }
 
+export async function postDownload(path: string, body: unknown, filename: string): Promise<void> {
+  const token = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API_URL}${path}`, { method: "POST", headers, body: JSON.stringify(body) });
+  if (res.status === 401) handleUnauthorized();
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new ApiError(res.status, err.detail || res.statusText);
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function wsUrl(token: string): string {
   const base = API_URL.replace(/^http/, "ws");
   return `${base}/ws?token=${encodeURIComponent(token)}`;

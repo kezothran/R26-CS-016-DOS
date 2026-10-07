@@ -317,6 +317,7 @@ export interface LiveOriginPoint {
   max_tier: string;
   attack_types: string[];
   last_seen: string;
+  host: string | null;
   country: string | null;
   country_code: string | null;
   city: string | null;
@@ -328,4 +329,29 @@ export interface LiveOrigins {
   geoip_ready: boolean;
   local_count: number;
   points: LiveOriginPoint[];
+  local_points: LiveOriginPoint[];
+}
+
+export interface AgentRow {
+  id: string;
+  name: string;
+  hostname: string;
+  os: string | null;
+  agent_version: string | null;
+  remote_ip: string | null;
+  interfaces: string[];
+  revoked: boolean;
+  status: "online" | "offline" | "revoked";
+  enrolled_at: string;
+  last_seen_at: string | null;
+  last_window_packets: number;
+  total_packets: number;
+  alerts_24h: number;
+}
+
+export interface AgentsResponse {
+  online_window_secs: number;
+  local_capture: boolean;
+  summary: { total: number; online: number; offline: number; revoked: number };
+  agents: AgentRow[];
 }

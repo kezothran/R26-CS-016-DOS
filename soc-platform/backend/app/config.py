@@ -67,6 +67,12 @@ class Settings(BaseSettings):
     summary_hour: int = 8
     summary_email_to: str | None = None
 
+    # Cloud mode: set LOCAL_CAPTURE=false on a server that only receives traffic from agents (no
+    # packet sniffing, no Administrator/root needed). Agents count as offline after AGENT_ONLINE_SECS.
+    local_capture: bool = True
+    agent_online_secs: int = 90
+    agent_max_body_mb: int = 8
+
     # Public URL of the dashboard, used for "Open incident" buttons in alert emails.
     dashboard_url: str = "http://localhost:3000"
 
