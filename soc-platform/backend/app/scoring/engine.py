@@ -29,7 +29,7 @@ def _build_events(all_atk_rows: dict[str, list[dict]], cfg: dict, now: datetime)
         if attack_type not in cfg["scoring_weights"]:
             continue
         for r in rows:
-            raw_score, normalized_impact, tier = event_scorer.score_event(attack_type, r["n_packets"], cfg)
+            raw_score, normalized_impact, tier = event_scorer.score_event(attack_type, r["n_packets"], cfg, confidence=r.get("hp"))
             events.append({
                 "attack_type": attack_type,
                 "src_ip": r["src"],

@@ -75,6 +75,13 @@ def mark_notified(incident_id: str) -> None:
             _active[incident_id]["notified"] = True
 
 
+_INCIDENT_TIER_RANK = {"Low": 0, "Medium": 1, "High": 2, "Critical": 3}
+_DASHBOARD_ORDER = ["Normal", "Elevated", "High", "Critical"]
+# The lowest dashboard tier an active incident of a given rank allows: a Medium incident means the
+# system is no longer "Normal", High means "High", Critical means "Critical".
+_DASHBOARD_FLOOR = {1: "Elevated", 2: "High", 3: "Critical"}
+
+
 def _dashboard_tier(score: float, cfg: dict) -> str:
     for tier_name, (low, high) in cfg["scoring_dashboard_tiers"].items():
         if low <= score <= high:
@@ -98,6 +105,7 @@ def prune_and_score(cfg: dict, now: datetime) -> tuple[float, str, list[dict], l
 
         total_impact = 0.0
         any_critical = False
+        highest_rank = 0
         for incident in _active.values():
             # Decay by time since this incident was LAST seen, not since it started - a
             # sustained, still-ongoing attack keeps last_seen refreshed every cycle (see
@@ -109,9 +117,18 @@ def prune_and_score(cfg: dict, now: datetime) -> tuple[float, str, list[dict], l
             total_impact += incident["combined_impact"] * math.exp(-lam * age)
             if incident["tier"] == "Critical":
                 any_critical = True
+            highest_rank = max(highest_rank, _INCIDENT_TIER_RANK.get(incident["tier"], 0))
 
         score = round(max(0.0, min(100.0, 100.0 - total_impact)), 1)
         tier = "Critical" if any_critical else _dashboard_tier(score, cfg)
+        if cfg.get("scoring_active_incident_floor", True) and highest_rank:
+            floor_tier = _DASHBOARD_FLOOR[highest_rank]
+            if _DASHBOARD_ORDER.index(floor_tier) > _DASHBOARD_ORDER.index(tier):
+                tier = floor_tier
+            if tier != "Normal":
+                # keep the number and the label in agreement: clamp to the top of the tier's range
+                upper = cfg["scoring_dashboard_tiers"].get(tier.lower(), [0, 100])[1]
+                score = min(score, float(upper))
         active_list = [_serialize(i) for i in _active.values()]
 
         global _snapshot

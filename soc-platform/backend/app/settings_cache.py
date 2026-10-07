@@ -48,6 +48,16 @@ DEFAULTS = {
     "scoring_decay_lambda": 0.01,
     "scoring_active_window_minutes": 10,
     "scoring_dashboard_tiers": {"normal": [90, 100], "elevated": [70, 89], "high": [40, 69], "critical": [0, 39]},
+    # Detector-confidence floor for an event's tier (hybrid XGBoost+DL probability, 0-1). Volume alone
+    # (packet_count * weight) decides the tier otherwise, so a low-volume but confidently-detected
+    # attack used to read as Low. Only applies when the model's own probability is that high - the
+    # raw probability is often near 0 on real floods (see detection/loop.py::_display_conf), in
+    # which case volume decides, exactly as before.
+    "scoring_confidence_floor": {"medium": 0.85, "high": 0.97},
+    # An active Medium/High/Critical incident can never leave the dashboard security tier at
+    # "Normal": the tier is raised to at least Elevated/High/Critical and the 0-100 score is clamped
+    # to that tier's range so the number and the label agree. (Critical already overrode the score.)
+    "scoring_active_incident_floor": True,
 }
 
 _lock = threading.Lock()
