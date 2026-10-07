@@ -147,26 +147,28 @@ async def live_origins(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ):
-    """Recent attacker IPs with coordinates, for the live map. Private/loopback addresses can't be
-    geolocated and are counted separately (`local_count`) instead of silently dropped."""
+    """Recent attacker IPs for the live map. Public IPs get a map pin (GeoIP); private/loopback
+    addresses can't be geolocated, so instead of being silently folded into a bare count they're
+    grouped and listed the same way (IP, attack types, packet count, last seen) under
+    `local_points` - the dashboard shows them as a text list next to the map rather than a pin."""
     import ipaddress
 
     since = datetime.now(timezone.utc) - timedelta(minutes=min(max(minutes, 1), 1440))
     rows = (await session.execute(
-        select(Alert.src_ip, Alert.severity, Alert.attack_type, Alert.created_at).where(Alert.created_at >= since)
+        select(Alert.src_ip, Alert.severity, Alert.attack_type, Alert.created_at, Alert.iface).where(Alert.created_at >= since)
     )).all()
 
-    grouped: dict[str, dict] = {}
-    local_count = 0
-    for src_ip, severity, attack_type, created_at in rows:
+    public_grouped: dict[str, dict] = {}
+    local_grouped: dict[str, dict] = {}
+    for src_ip, severity, attack_type, created_at, iface in rows:
         try:
-            if not ipaddress.ip_address(src_ip).is_global:
-                local_count += 1
-                continue
+            is_global = ipaddress.ip_address(src_ip).is_global
         except ValueError:
             continue
-        e = grouped.setdefault(src_ip, {
+        bucket = public_grouped if is_global else local_grouped
+        e = bucket.setdefault(src_ip, {
             "src_ip": src_ip, "count": 0, "max_tier": "Low", "attack_types": set(), "last_seen": created_at,
+            "host": (iface or "").rsplit("@", 1)[1] if iface and "@" in iface else None,
         })
         e["count"] += 1
         e["attack_types"].add(attack_type)
@@ -175,16 +177,20 @@ async def live_origins(
         if TIER_RANK.get(_normalize_tier(severity), 0) > TIER_RANK.get(e["max_tier"], 0):
             e["max_tier"] = _normalize_tier(severity)
 
-    points = []
-    for e in sorted(grouped.values(), key=lambda x: -x["count"])[:100]:
-        geo = geoip.lookup(e["src_ip"])
-        points.append({
-            "src_ip": e["src_ip"], "count": e["count"], "max_tier": e["max_tier"],
+    def _out(e: dict, geo: dict | None) -> dict:
+        return {
+            "src_ip": e["src_ip"], "count": e["count"], "max_tier": e["max_tier"], "host": e["host"],
             "attack_types": sorted(e["attack_types"]), "last_seen": e["last_seen"].isoformat(),
             "country": geo["country"] if geo else None, "country_code": geo["country_code"] if geo else None,
             "city": geo["city"] if geo else None, "lat": geo["lat"] if geo else None, "lon": geo["lon"] if geo else None,
-        })
-    return {"geoip_ready": geoip.ready(), "local_count": local_count, "points": points}
+        }
+
+    points = [_out(e, geoip.lookup(e["src_ip"])) for e in sorted(public_grouped.values(), key=lambda x: -x["count"])[:100]]
+    local_points = [_out(e, None) for e in sorted(local_grouped.values(), key=lambda x: -x["count"])[:100]]
+    return {
+        "geoip_ready": geoip.ready(), "local_count": sum(e["count"] for e in local_grouped.values()),
+        "points": points, "local_points": local_points,
+    }
 
 
 def _normalize_tier(severity: str) -> str:

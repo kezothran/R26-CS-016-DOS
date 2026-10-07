@@ -15,10 +15,14 @@ function samplePoints(): LiveOrigins {
   const now = Date.now();
   const mk = (ip: string, country: string, code: string, city: string, lat: number, lon: number, count: number, tier: string, types: string[], agoSec: number): LiveOriginPoint => ({
     src_ip: ip, count, max_tier: tier, attack_types: types, last_seen: new Date(now - agoSec * 1000).toISOString(),
-    country, country_code: code, city, lat, lon,
+    host: null, country, country_code: code, city, lat, lon,
+  });
+  const mkLocal = (ip: string, host: string | null, count: number, tier: string, types: string[], agoSec: number): LiveOriginPoint => ({
+    src_ip: ip, count, max_tier: tier, attack_types: types, last_seen: new Date(now - agoSec * 1000).toISOString(),
+    host, country: null, country_code: null, city: null, lat: null, lon: null,
   });
   return {
-    geoip_ready: true, local_count: 0,
+    geoip_ready: true, local_count: 2,
     points: [
       mk("203.0.113.24", "China", "CN", "Zhengzhou", 34.77, 113.72, 412, "Critical", ["udp", "syn"], 12),
       mk("198.51.100.7", "Russia", "RU", "Moscow", 55.75, 37.62, 268, "High", ["syn"], 35),
@@ -28,6 +32,10 @@ function samplePoints(): LiveOrigins {
       mk("192.0.2.14", "India", "IN", "Mumbai", 19.08, 72.88, 41, "Low", ["icmp"], 900),
       mk("203.0.113.77", "Nigeria", "NG", "Lagos", 6.52, 3.38, 28, "Low", ["syn"], 15),
       mk("198.51.100.99", "Australia", "AU", "Sydney", -33.87, 151.21, 17, "Low", ["udp"], 1500),
+    ],
+    local_points: [
+      mkLocal("192.168.56.109", "noel", 1762, "Critical", ["icmp", "syn", "fragmentation", "udp"], 8),
+      mkLocal("192.168.56.1", "noel", 341, "Medium", ["icmp"], 8),
     ],
   };
 }
@@ -145,7 +153,7 @@ export default function AttackMapPage() {
             </div>
           ))}
         </Card>
-        <Card title="Attackers">
+        <Card title="Attackers (public IPs, mapped)">
           {(view?.points ?? []).length === 0 ? <Dim>None.</Dim> : (view?.points ?? []).slice(0, 8).map((p) => (
             <div key={p.src_ip} style={{ display: "flex", gap: 10, fontSize: 12, padding: "5px 0", borderBottom: "1px solid var(--raised)" }}>
               <span style={{ width: 8, height: 8, borderRadius: 4, background: severityColor(p.max_tier), marginTop: 4 }} />
@@ -154,7 +162,32 @@ export default function AttackMapPage() {
               <b>{p.count}</b>
             </div>
           ))}
-          {!preview && data && data.local_count > 0 && <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 8 }}>{data.local_count} alert(s) came from private/local addresses and can&apos;t be placed on the map.</div>}
+        </Card>
+        <Card title="Attackers (private IPs - not on the map)">
+          {(view?.local_points ?? []).length === 0 ? (
+            <Dim>None.</Dim>
+          ) : (
+            <>
+              {(view?.local_points ?? []).slice(0, 8).map((p) => (
+                <div key={p.src_ip} style={{ padding: "6px 0", borderBottom: "1px solid var(--raised)" }}>
+                  <div style={{ display: "flex", gap: 10, fontSize: 12, alignItems: "center" }}>
+                    <span style={{ width: 8, height: 8, borderRadius: 4, background: severityColor(p.max_tier) }} />
+                    <span style={{ fontFamily: "var(--mono)", flex: 1 }}>{p.src_ip}</span>
+                    {p.host && (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: "var(--amber)", background: "rgba(227,179,65,.12)", border: "1px solid rgba(227,179,65,.35)", borderRadius: 5, padding: "1px 7px" }}>
+                        {p.host}
+                      </span>
+                    )}
+                    <b>{p.count}</b>
+                  </div>
+                  <div style={{ fontSize: 10, color: "var(--dim)", marginLeft: 18, marginTop: 2 }}>{p.attack_types.map((a) => a.toUpperCase()).join(", ")}</div>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: "var(--dim)", marginTop: 8 }}>
+                Private/local addresses have no public location, so they can&apos;t get a map pin - listed here instead.
+              </div>
+            </>
+          )}
         </Card>
       </div>
     </div>
