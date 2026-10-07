@@ -93,6 +93,12 @@ async def patch_user(
     if body.role is not None:
         if body.role not in ROLES:
             raise HTTPException(status_code=400, detail=f"role must be one of {ROLES}")
+        # Same guard delete_user has: demoting the last admin would leave nobody able to manage users,
+        # agents, playbooks or notifications (this actually happened on 2026-10-06).
+        if target.role == "admin" and body.role != "admin":
+            admin_count = (await session.execute(select(func.count()).where(User.role == "admin"))).scalar_one()
+            if admin_count <= 1:
+                raise HTTPException(status_code=409, detail="Cannot remove the last remaining admin - make someone else an admin first")
         target.role = body.role
     if body.analyst_tier is not None:
         if body.analyst_tier not in (1, 2, 3):
